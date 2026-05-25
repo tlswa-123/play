@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>赛博朋克泡泡龙</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0f;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  overflow: hidden;
+  font-family: 'Courier New', monospace;
+}
+#gameContainer {
+  position: relative;
+}
+canvas {
+  display: block;
+  border: 1px solid rgba(255,0,255,0.3);
+  box-shadow: 0 0 30px rgba(255,0,255,0.15), 0 0 60px rgba(0,200,255,0.1);
+}
+#ui {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 16px;
+  pointer-events: none;
+  z-index: 10;
+}
+.ui-label {
+  color: rgba(255,0,255,0.9);
+  font-size: 13px;
+  text-shadow: 0 0 8px rgba(255,0,255,0.6);
+  letter-spacing: 2px;
+}
+.ui-value {
+  color: #0cf;
+  font-size: 18px;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(0,204,255,0.8);
+}
+#gameOver {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(5,5,15,0.92);
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 20;
+}
+#gameOver h1 {
+  color: #f0f;
+  font-size: 32px;
+  text-shadow: 0 0 20px #f0f, 0 0 40px #f0f;
+  margin-bottom: 12px;
+  letter-spacing: 6px;
+}
+#gameOver p {
+  color: #0cf;
+  font-size: 18px;
+  text-shadow: 0 0 10px #0cf;
+  margin-bottom: 24px;
+}
+#restartBtn {
+  background: transparent;
+  border: 2px solid #f0f;
+  color: #f0f;
+  padding: 10px 32px;
+  font-size: 16px;
+  font-family: 'Courier New', monospace;
+  cursor: pointer;
+  letter-spacing: 3px;
+  text-shadow: 0 0 8px #f0f;
+  box-shadow: 0 0 15px rgba(255,0,255,0.4);
+  transition: all 0.3s;
+}
+#restartBtn:hover {
+  background: rgba(255,0,255,0.15);
+  box-shadow: 0 0 25px rgba(255,0,255,0.6);
+}
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui">
+    <div><span class="ui-label">SCORE </span><span class="ui-value" id="scoreVal">0</span></div>
+    <div><span class="ui-label">COMBO </span><span class="ui-value" id="comboVal">0</span></div>
+  </div>
+  <div id="gameOver">
+    <h1>GAME OVER</h1>
+    <p>SCORE: <span id="finalScore">0</span></p>
+    <button id="restartBtn">RESTART</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// === 画布尺寸 ===
+const W = 420, H = 680;
+canvas.width = W;
+canvas.height = H;
+
+// === 泡泡参数 ===
+const BUBBLE_R = 18;
+const COLS = 11;
+const ROW_H = BUBBLE_R * 1.72;
+const START_Y = 55;
+const SHOOTER_Y = H - 60;
+
+// === 5种霓虹色 ===
+const NEON_COLORS = [
+  { name: 'magenta',  fill: 'rgba(255,0,255,0.55)',   glow: '#ff00ff', stroke: 'rgba(255,0,255,0.9)',   highlight: 'rgba(255,150,255,0.7)' },
+  { name: 'cyan',     fill: 'rgba(0,200,255,0.55)',    glow: '#00c8ff', stroke: 'rgba(0,200,255,0.9)',   highlight: 'rgba(150,230,255,0.7)' },
+  { name: 'green',    fill: 'rgba(0,255,100,0.55)',    glow: '#00ff64', stroke: 'rgba(0,255,100,0.9)',   highlight: 'rgba(150,255,200,0.7)' },
+  { name: 'orange',   fill: 'rgba(255,160,0,0.55)',    glow: '#ffa000', stroke: 'rgba(255,160,0,0.9)',   highlight: 'rgba(255,210,100,0.7)' },
+  { name: 'violet',   fill: 'rgba(180,0,255,0.55)',    glow: '#b400ff', stroke: 'rgba(180,0,255,0.9)',   highlight: 'rgba(210,150,255,0.7)' },
+];
+
+// === 游戏状态 ===
+let grid = [];           // grid[row][col] = colorIndex or -1
+let score = 0;
+let combo = 0;
+let gameOver = false;
+let shooting = false;
+let currentBubble = null;
+let nextBubble = null;
+let aimAngle = -Math.PI / 2;
+let mouseX = W / 2, mouseY = 0;
+let explosions = [];
+let floatingTexts = [];
+let bgParticles = [];
+let scanLineOffset = 0;
+
+// === 初始化背景粒子 ===
+function initBgParticles() {
+  bgParticles = [];
+  for (let i = 0; i < 40; i++) {
+    bgParticles.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      speed: Math.random() * 0.3 + 0.1,
+      alpha: Math.random() * 0.4 + 0.1,
+      color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)].glow
+    });
+  }
+}
+
+// === 网格坐标转换 ===
+function gridToPos(row, col) {
+  let offset = (row % 2 === 1) ? BUBBLE_R : 0;
+  return {
+    x: col * BUBBLE_R * 2 + BUBBLE_R + offset,
+    y: row * ROW_H + START_Y
+  };
+}
+
+function posToGrid(x, y) {
+  let row = Math.round((y - START_Y) / ROW_H);
+  let offset = (row % 2 === 1) ? BUBBLE_R : 0;
+  let col = Math.round((x - BUBBLE_R - offset) / (BUBBLE_R * 2));
+  col = Math.max(0, Math.min(col, (row % 2 === 1) ? COLS - 2 : COLS - 1));
+  return { row, col };
+}
+
+function getMaxCol(row) {
+  return (row % 2 === 1) ? COLS - 2 : COLS - 1;
+}
+
+// === 初始化网格 ===
+function initGrid() {
+  grid = [];
+  for (let r = 0; r < 12; r++) {
+    grid[r] = [];
+    let maxC = getMaxCol(r);
+    for (let c = 0; c <= maxC; c++) {
+      if (r < 6) {
+        grid[r][c] = Math.floor(Math.random() * NEON_COLORS.length);
+      } else {
+        grid[r][c] = -1;
+      }
+    }
+  }
+}
+
+// === 获取邻居 ===
+function getNeighbors(row, col) {
+  let neighbors = [];
+  let even = (row % 2 === 0);
+  let dirs = even
+    ? [[-1,-1],[-1,0],[0,-1],[0,1],[1,-1],[1,0]]
+    : [[-1,0],[-1,1],[0,-1],[0,1],[1,0],[1,1]];
+  for (let [dr, dc] of dirs) {
+    let nr = row + dr, nc = col + dc;
+    if (nr >= 0 && nr < grid.length && nc >= 0 && nc <= getMaxCol(nr)) {
+      neighbors.push({ row: nr, col: nc });
+    }
+  }
+  return neighbors;
+}
+
+// === BFS查找同色连通 ===
+function findConnected(row, col, colorIdx) {
+  let visited = new Set();
+  let queue = [{ row, col }];
+  let key = `${row},${col}`;
+  visited.add(key);
+  let connected = [{ row, col }];
+  while (queue.length > 0) {
+    let cur = queue.shift();
+    for (let n of getNeighbors(cur.row, cur.col)) {
+      let nk = `${n.row},${n.col}`;
+      if (!visited.has(nk) && grid[n.row] && grid[n.row][n.col] === colorIdx) {
+        visited.add(nk);
+        queue.push(n);
+        connected.push(n);
+      }
+    }
+  }
+  return connected;
+}
+
+// === 查找悬浮泡泡 ===
+function findFloating() {
+  let attached = new Set();
+  // 从顶行开始BFS
+  let maxC0 = getMaxCol(0);
+  for (let c = 0; c <= maxC0; c++) {
+    if (grid[0][c] >= 0) attached.add(`0,${c}`);
+  }
+  let queue = [...attached].map(k => { let [r,c] = k.split(',').map(Number); return {row:r,col:c}; });
+  while (queue.length > 0) {
+    let cur = queue.shift();
+    for (let n of getNeighbors(cur.row, cur.col)) {
+      let nk = `${n.row},${n.col}`;
+      if (!attached.has(nk) && grid[n.row] && grid[n.row][n.col] >= 0) {
+        attached.add(nk);
+        queue.push(n);
+      }
+    }
+  }
+  let floating = [];
+  for (let r = 0; r < grid.length; r++) {
+    let maxC = getMaxCol(r);
+    for (let c = 0; c <= maxC; c++) {
+      if (grid[r][c] >= 0 && !attached.has(`${r},${c}`)) {
+        floating.push({ row: r, col: c, color: grid[r][c] });
+      }
+    }
+  }
+  return floating;
+}
+
+// === 创建泡泡对象 ===
+function createBubble(colorIdx) {
+  return {
+    x: W / 2,
+    y: SHOOTER_Y,
+    vx: 0,
+    vy: 0,
+    color: colorIdx >= 0 ? colorIdx : Math.floor(Math.random() * NEON_COLORS.length),
+    radius: BUBBLE_R
+  };
+}
+
+// === 随机颜色（倾向场上存在的颜色）===
+function pickColor() {
+  let existing = new Set();
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < (grid[r] ? grid[r].length : 0); c++) {
+      if (grid[r][c] >= 0) existing.add(grid[r][c]);
+    }
+  }
+  if (existing.size === 0) return Math.floor(Math.random() * NEON_COLORS.length);
+  let arr = [...existing];
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// === 发射泡泡 ===
+function shootBubble() {
+  if (shooting || gameOver) return;
+  shooting = true;
+  let speed = 12;
+  currentBubble.vx = Math.cos(aimAngle) * speed;
+  currentBubble.vy = Math.sin(aimAngle) * speed;
+}
+
+// === 吸附到网格 ===
+function snapBubble(bubble) {
+  let { row, col } = posToGrid(bubble.x, bubble.y);
+  // 确保行存在
+  while (row >= grid.length) {
+    let newRow = [];
+    let maxC = getMaxCol(grid.length);
+    for (let c = 0; c <= maxC; c++) newRow.push(-1);
+    grid.push(newRow);
+  }
+  col = Math.max(0, Math.min(col, getMaxCol(row)));
+
+  // 如果该位置已被占据，找最近的空位
+  if (grid[row] && grid[row][col] >= 0) {
+    let bestDist = Infinity, bestR = row, bestC = col;
+    for (let r = Math.max(0, row - 1); r <= Math.min(grid.length - 1, row + 1); r++) {
+      let maxC = getMaxCol(r);
+      for (let c = 0; c <= maxC; c++) {
+        if (grid[r][c] < 0) {
+          let pos = gridToPos(r, c);
+          let d = Math.hypot(pos.x - bubble.x, pos.y - bubble.y);
+          if (d < bestDist) { bestDist = d; bestR = r; bestC = c; }
+        }
+      }
+    }
+    row = bestR;
+    col = bestC;
+  }
+
+  // 确保grid[row]长度足够
+  while (grid[row].length <= col) grid[row].push(-1);
+  grid[row][col] = bubble.color;
+
+  // 检查消除
+  let connected = findConnected(row, col, bubble.color);
+  let eliminated = [];
+  if (connected.length >= 3) {
+    combo++;
+    for (let c of connected) {
+      let pos = gridToPos(c.row, c.col);
+      addExplosion(pos.x, pos.y, NEON_COLORS[bubble.color]);
+      eliminated.push({ row: c.row, col: c.col, color: grid[c.row][c.col] });
+      grid[c.row][c.col] = -1;
+    }
+    let pts = connected.length * 10 * combo;
+    score += pts;
+    let pos = gridToPos(row, col);
+    addFloatingText(`+${pts}`, pos.x, pos.y, NEON_COLORS[bubble.color].glow);
+
+    // 检查悬浮泡泡
+    let floating = findFloating();
+    if (floating.length > 0) {
+      let bonusPts = floating.length * 15 * combo;
+      score += bonusPts;
+      for (let f of floating) {
+        let fpos = gridToPos(f.row, f.col);
+        addExplosion(fpos.x, fpos.y, NEON_COLORS[f.color]);
+        grid[f.row][f.col] = -1;
+      }
+      addFloatingText(`+${bonusPts} DROP!`, W / 2, H / 2 - 40, '#fff');
+    }
+  } else {
+    combo = 0;
+  }
+
+  updateUI();
+  checkGameOver();
+  prepareNext();
+}
+
+// === 准备下一颗泡泡 ===
+function prepareNext() {
+  currentBubble = nextBubble || createBubble(pickColor());
+  currentBubble.x = W / 2;
+  currentBubble.y = SHOOTER_Y;
+  currentBubble.vx = 0;
+  currentBubble.vy = 0;
+  nextBubble = createBubble(pickColor());
+  nextBubble.x = W / 2 + 50;
+  nextBubble.y = SHOOTER_Y;
+  shooting = false;
+}
+
+// === 检查游戏结束 ===
+function checkGameOver() {
+  for (let c = 0; c <= getMaxCol(grid.length - 1); c++) {
+    if (grid[grid.length - 1] && grid[grid.length - 1][c] >= 0) {
+      let pos = gridToPos(grid.length - 1, c);
+      if (pos.y + BUBBLE_R >= SHOOTER_Y - 40) {
+        gameOver = true;
+        document.getElementById('finalScore').textContent = score;
+        document.getElementById('gameOver').style.display = 'flex';
+        return;
+      }
+    }
+  }
+  // 也检查是否有泡泡接近底部
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < (grid[r] ? grid[r].length : 0); c++) {
+      if (grid[r][c] >= 0) {
+        let pos = gridToPos(r, c);
+        if (pos.y + BUBBLE_R >= SHOOTER_Y - 30) {
+          gameOver = true;
+          document.getElementById('finalScore').textContent = score;
+          document.getElementById('gameOver').style.display = 'flex';
+          return;
+        }
+      }
+    }
+  }
+}
+
+// === 爆炸特效 ===
+function addExplosion(x, y, colorObj) {
+  // 霓虹光圈
+  for (let i = 0; i < 3; i++) {
+    explosions.push({
+      x, y,
+      radius: BUBBLE_R * 0.5,
+      maxRadius: BUBBLE_R * (2.5 + i * 0.8),
+      alpha: 0.9 - i * 0.2,
+      color: colorObj.glow,
+      speed: 2.5 + i * 0.6,
+      lineWidth: 3 - i * 0.7
+    });
+  }
+  // 粒子碎片
+  for (let i = 0; i < 8; i++) {
+    let angle = (Math.PI * 2 / 8) * i + Math.random() * 0.3;
+    let speed = 2 + Math.random() * 3;
+    explosions.push({
+      type: 'particle',
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius: 2 + Math.random() * 2,
+      alpha: 1,
+      color: colorObj.glow,
+      life: 1
+    });
+  }
+}
+
+function addFloatingText(text, x, y, color) {
+  floatingTexts.push({ text, x, y, alpha: 1, color, vy: -1.5, life: 60 });
+}
+
+// === 更新UI ===
+function updateUI() {
+  document.getElementById('scoreVal').textContent = score;
+  document.getElementById('comboVal').textContent = combo;
+}
+
+// ==================== 渲染 ====================
+
+// === 绘制背景 ===
+function drawBackground() {
+  // 深黑底
+  ctx.fillStyle = '#0a0a0f';
+  ctx.fillRect(0, 0, W, H);
+
+  // 微弱网格线
+  ctx.strokeStyle = 'rgba(255,0,255,0.03)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // 扫描线效果
+  scanLineOffset = (scanLineOffset + 0.5) % 4;
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  for (let y = scanLineOffset; y < H; y += 4) {
+    ctx.fillRect(0, y, W, 1);
+  }
+
+  // 背景粒子
+  for (let p of bgParticles) {
+    p.y -= p.speed;
+    if (p.y < -5) { p.y = H + 5; p.x = Math.random() * W; }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = p.alpha;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+}
+
+// === 绘制单个泡泡 ===
+function drawBubble(x, y, colorIdx, r, alpha) {
+  if (colorIdx < 0) return;
+  let c = NEON_COLORS[colorIdx];
+  r = r || BUBBLE_R;
+  alpha = alpha || 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // 外发光
+  ctx.shadowColor = c.glow;
+  ctx.shadowBlur = 18;
+
+  // 主体渐变
+  let grad = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.1, x, y, r);
+  grad.addColorStop(0, c.highlight);
+  grad.addColorStop(0.4, c.fill);
+  grad.addColorStop(1, 'rgba(0,0,0,0.3)');
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 边框
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = c.stroke;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // 光泽反射 - 顶部高光弧
+  ctx.beginPath();
+  ctx.arc(x - r * 0.15, y - r * 0.2, r * 0.55, Math.PI * 1.1, Math.PI * 1.85);
+  let shineGrad = ctx.createLinearGradient(x - r, y - r, x + r * 0.5, y);
+  shineGrad.addColorStop(0, 'rgba(255,255,255,0.45)');
+  shineGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.strokeStyle = shineGrad;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // 小高光点
+  ctx.beginPath();
+  ctx.arc(x - r * 0.3, y - r * 0.35, r * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// === 绘制网格泡泡 ===
+function drawGridBubbles() {
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < (grid[r] ? grid[r].length : 0); c++) {
+      if (grid[r][c] >= 0) {
+        let pos = gridToPos(r, c);
+        drawBubble(pos.x, pos.y, grid[r][c]);
+      }
+    }
+  }
+}
+
+// === 绘制瞄准线 ===
+function drawAimLine() {
+  if (shooting || gameOver) return;
+  let startX = currentBubble.x;
+  let startY = currentBubble.y;
+  let dx = Math.cos(aimAngle);
+  let dy = Math.sin(aimAngle);
+
+  ctx.save();
+  ctx.setLineDash([6, 8]);
+  ctx.lineDashOffset = -Date.now() / 50;
+
+  let len = 120;
+  let endX = startX + dx * len;
+  let endY = startY + dy * len;
+
+  let aimGrad = ctx.createLinearGradient(startX, startY, endX, endY);
+  aimGrad.addColorStop(0, 'rgba(0,255,255,0.6)');
+  aimGrad.addColorStop(1, 'rgba(0,255,255,0)');
+  ctx.strokeStyle = aimGrad;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#0ff';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  // 瞄准点
+  ctx.beginPath();
+  ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,255,255,0.8)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// === 绘制发射器 ===
+function drawShooter() {
+  // 发射器底座
+  ctx.save();
+  ctx.shadowColor = '#f0f';
+  ctx.shadowBlur = 15;
+
+  let cx = W / 2, cy = SHOOTER_Y;
+  ctx.strokeStyle = 'rgba(255,0,255,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 内圈
+  ctx.strokeStyle = 'rgba(0,200,255,0.4)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // 当前泡泡
+  if (currentBubble) {
+    drawBubble(currentBubble.x, currentBubble.y, currentBubble.color);
+  }
+
+  // 下一颗预览
+  if (nextBubble) {
+    ctx.save();
+    ctx.globalAlpha = 0.6;
+    drawBubble(nextBubble.x, nextBubble.y, nextBubble.color, BUBBLE_R * 0.65, 0.6);
+    ctx.restore();
+    // "NEXT" 标签
+    ctx.fillStyle = 'rgba(0,200,255,0.5)';
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('NEXT', nextBubble.x, nextBubble.y + BUBBLE_R * 0.65 + 12);
+  }
+}
+
+// === 绘制爆炸特效 ===
+function drawExplosions() {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    let e = explosions[i];
+
+    if (e.type === 'particle') {
+      e.x += e.vx;
+      e.y += e.vy;
+      e.life -= 0.025;
+      e.alpha = e.life;
+      if (e.life <= 0) { explosions.splice(i, 1); continue; }
+
+      ctx.save();
+      ctx.globalAlpha = e.alpha;
+      ctx.shadowColor = e.color;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius * e.life, 0, Math.PI * 2);
+      ctx.fillStyle = e.color;
+      ctx.fill();
+      ctx.restore();
+      continue;
+    }
+
+    // 光圈扩散
+    e.radius += e.speed;
+    e.alpha -= 0.02;
+    if (e.alpha <= 0 || e.radius >= e.maxRadius) {
+      explosions.splice(i, 1);
+      continue;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = e.alpha;
+    ctx.shadowColor = e.color;
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = e.color;
+    ctx.lineWidth = e.lineWidth * e.alpha;
+    ctx.stroke();
+
+    // 内层光晕
+    let glowGrad = ctx.createRadialGradient(e.x, e.y, e.radius * 0.7, e.x, e.y, e.radius);
+    glowGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    glowGrad.addColorStop(1, e.color.replace(')', ',0.15)').replace('rgb(', 'rgba(').replace('#', ''));
+    // 简化：用固定低透明度
+    ctx.fillStyle = `rgba(255,255,255,${0.03 * e.alpha})`;
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+// === 绘制浮动文字 ===
+function drawFloatingTexts() {
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    let ft = floatingTexts[i];
+    ft.y += ft.vy;
+    ft.life--;
+    ft.alpha = ft.life / 60;
+    if (ft.life <= 0) { floatingTexts.splice(i, 1); continue; }
+
+    ctx.save();
+    ctx.globalAlpha = ft.alpha;
+    ctx.font = 'bold 18px Courier New';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = ft.color;
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = ft.color;
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+  }
+}
+
+// === 绘制顶部边界线 ===
+function drawTopLine() {
+  ctx.save();
+  let y = START_Y - BUBBLE_R - 4;
+  let grad = ctx.createLinearGradient(0, y, W, y);
+  grad.addColorStop(0, 'rgba(255,0,255,0)');
+  grad.addColorStop(0.3, 'rgba(255,0,255,0.5)');
+  grad.addColorStop(0.5, 'rgba(0,200,255,0.8)');
+  grad.addColorStop(0.7, 'rgba(255,0,255,0.5)');
+  grad.addColorStop(1, 'rgba(255,0,255,0)');
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#0cf';
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  ctx.lineTo(W, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ==================== 更新逻辑 ====================
+
+function update() {
+  if (gameOver) return;
+
+  // 更新飞行中的泡泡
+  if (shooting && currentBubble) {
+    currentBubble.x += currentBubble.vx;
+    currentBubble.y += currentBubble.vy;
+
+    // 左右墙壁反弹
+    if (currentBubble.x - BUBBLE_R < 0) {
+      currentBubble.x = BUBBLE_R;
+      currentBubble.vx *= -1;
+    }
+    if (currentBubble.x + BUBBLE_R > W) {
+      currentBubble.x = W - BUBBLE_R;
+      currentBubble.vx *= -1;
+    }
+
+    // 顶部碰撞
+    if (currentBubble.y - BUBBLE_R <= START_Y - BUBBLE_R) {
+      currentBubble.y = START_Y;
+      snapBubble(currentBubble);
+      return;
+    }
+
+    // 与网格泡泡碰撞检测
+    for (let r = 0; r < grid.length; r++) {
+      for (let c = 0; c < (grid[r] ? grid[r].length : 0); c++) {
+        if (grid[r][c] >= 0) {
+          let pos = gridToPos(r, c);
+          let dist = Math.hypot(currentBubble.x - pos.x, currentBubble.y - pos.y);
+          if (dist < BUBBLE_R * 2) {
+            snapBubble(currentBubble);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  // 更新瞄准角度
+  if (!shooting && currentBubble) {
+    let dx = mouseX - currentBubble.x;
+    let dy = mouseY - currentBubble.y;
+    aimAngle = Math.atan2(dy, dx);
+    // 限制只能向上发射
+    if (aimAngle > -0.15) aimAngle = -0.15;
+    if (aimAngle < -Math.PI + 0.15) aimAngle = -Math.PI + 0.15;
+  }
+}
+
+// ==================== 主循环 ====================
+
+function gameLoop() {
+  update();
+
+  // 清空并绘制
+  drawBackground();
+  drawTopLine();
+  drawGridBubbles();
+  drawAimLine();
+  drawShooter();
+  drawExplosions();
+  drawFloatingTexts();
+
+  // 底部装饰线
+  ctx.save();
+  let bGrad = ctx.createLinearGradient(0, H - 10, W, H - 10);
+  bGrad.addColorStop(0, 'rgba(0,255,100,0)');
+  bGrad.addColorStop(0.5, 'rgba(0,255,100,0.3)');
+  bGrad.addColorStop(1, 'rgba(0,255,100,0)');
+  ctx.strokeStyle = bGrad;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, H - 10);
+  ctx.lineTo(W, H - 10);
+  ctx.stroke();
+  ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ==================== 输入处理 ====================
+
+canvas.addEventListener('mousemove', (e) => {
+  let rect = canvas.getBoundingClientRect();
+  let scaleX = W / rect.width;
+  let scaleY = H / rect.height;
+  mouseX = (e.clientX - rect.left) * scaleX;
+  mouseY = (e.clientY - rect.top) * scaleY;
+});
+
+canvas.addEventListener('click', (e) => {
+  if (!shooting && !gameOver) {
+    shootBubble();
+  }
+});
+
+// 触摸支持
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  let rect = canvas.getBoundingClientRect();
+  let scaleX = W / rect.width;
+  let scaleY = H / rect.height;
+  mouseX = (e.touches[0].clientX - rect.left) * scaleX;
+  mouseY = (e.touches[0].clientY - rect.top) * scaleY;
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  if (!shooting && !gameOver) {
+    shootBubble();
+  }
+});
+
+// 重新开始
+document.getElementById('restartBtn').addEventListener('click', () => {
+  gameOver = false;
+  score = 0;
+  combo = 0;
+  explosions = [];
+  floatingTexts = [];
+  document.getElementById('gameOver').style.display = 'none';
+  initGrid();
+  prepareNext();
+  updateUI();
+});
+
+// ==================== 启动 ====================
+
+initBgParticles();
+initGrid();
+currentBubble = createBubble(pickColor());
+nextBubble = createBubble(pickColor());
+nextBubble.x = W / 2 + 50;
+nextBubble.y = SHOOTER_Y;
+updateUI();
+gameLoop();
+
+</script>
+</body>
+</html>
