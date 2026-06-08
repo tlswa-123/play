@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>麻将堆叠消消乐</title>
+<style>
+/* ================== 全局基础 ================== */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+body {
+  background: radial-gradient(ellipse at top, #d8f0d4 0%, #b8e0b0 60%, #9fcf95 100%);
+  background-attachment: fixed;
+  color: #2d3a2a;
+}
+.game-wrap { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+/* ================== 顶栏 ================== */
+.topbar {
+  flex: 0 0 auto; height: 56px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,.7), rgba(255,255,255,.45));
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 2px 8px rgba(80,120,80,.12); z-index: 5;
+}
+.logo { font-size: 18px; font-weight: 700; color: #3b5c34; letter-spacing: 1px; }
+.timer-box, .counter-box {
+  display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+  background: #fff; border-radius: 999px; box-shadow: 0 2px 6px rgba(80,120,80,.18); font-size: 14px;
+}
+.timer { font-size: 18px; font-weight: 700; color: #d44a2a; min-width: 30px; text-align: center; }
+.timer.warning { animation: blink 0.8s ease-in-out infinite; }
+@keyframes blink { 0%,100%{color:#d44a2a} 50%{color:#ff7a4a} }
+.counter { font-size: 16px; font-weight: 700; color: #3b5c34; }
+
+/* ================== 棋盘 ================== */
+.board { flex: 1 1 auto; position: relative; width: 100%; overflow: hidden; }
+
+/* ================== 麻将牌 ================== */
+.tile {
+  position: absolute; width: 52px; height: 68px; border-radius: 8px; background: #ffffff;
+  box-shadow: 0 1px 0 rgba(0,0,0,.04) inset, 0 -2px 0 rgba(0,0,0,.06) inset,
+    2px 4px 6px rgba(60,80,60,.25), 0 8px 12px rgba(60,80,60,.18);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid #e5e8e2; will-change: transform;
+}
+.tile.locked { cursor: not-allowed; filter: brightness(0.78) saturate(0.6); }
+.tile.locked::after {
+  content: ''; position: absolute; inset: 0; background: rgba(40,60,40,.18);
+  border-radius: 8px; pointer-events: none;
+}
+.tile:not(.locked):hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 2px 4px 6px rgba(60,80,60,.25), 0 12px 20px rgba(60,80,60,.3);
+}
+.tile:not(.locked):active { transform: scale(0.96); }
+.tile.flying { z-index: 9999 !important; pointer-events: none; }
+
+/* ================== 暂存卡槽 ================== */
+.slot-area {
+  flex: 0 0 auto; padding: 10px 8px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,.55), rgba(255,255,255,.85));
+  border-top: 1px solid rgba(80,120,80,.18);
+}
+.slot-tip { text-align: center; font-size: 12px; color: #5a7a55; margin-bottom: 8px; letter-spacing: 0.5px; }
+.slots { display: flex; justify-content: center; gap: 6px; padding: 0 8px; }
+.slot {
+  width: 44px; height: 58px; border-radius: 8px;
+  background: rgba(255,255,255,.55); border: 2px dashed rgba(120,150,120,.5);
+  position: relative; flex-shrink: 0;
+}
+.slot.has-tile { border-style: solid; border-color: rgba(120,150,120,.2); background: transparent; }
+.slot.matching { animation: slot-flash 0.35s ease; }
+@keyframes slot-flash {
+  0%{background:rgba(255,220,120,.7);transform:scale(1)}
+  50%{background:rgba(255,200,80,.9);transform:scale(1.08)}
+  100%{background:transparent;transform:scale(1)}
+}
+.slot .tile { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
+
+/* ================== 底栏 ================== */
+.bottombar {
+  flex: 0 0 auto; display: flex; justify-content: center; gap: 16px;
+  padding: 10px 16px 14px; background: rgba(255,255,255,.6);
+}
+.btn {
+  padding: 8px 18px; border: none; border-radius: 999px; background: #fff;
+  color: #3b5c34; font-size: 14px; font-weight: 600;
+  box-shadow: 0 2px 6px rgba(80,120,80,.2); cursor: pointer; transition: transform 0.1s ease;
+}
+.btn:active { transform: scale(0.96); }
+.btn.primary { background: linear-gradient(180deg, #6dbf5e, #4a9c3d); color: #fff; }
+
+/* ================== 弹窗 ================== */
+.modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+.modal.hidden { display: none; }
+.modal-card {
+  background: #fff; border-radius: 18px; padding: 28px 36px; text-align: center;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+  animation: pop-in 0.35s cubic-bezier(.4,1.6,.6,1); min-width: 260px;
+}
+@keyframes pop-in { 0%{transform:scale(0.7);opacity:0} 100%{transform:scale(1);opacity:1} }
+.modal-title { font-size: 26px; font-weight: 800; color: #3b5c34; margin-bottom: 8px; }
+.modal-sub { font-size: 14px; color: #6a7a65; margin-bottom: 20px; }
+
+/* 麻将花色颜色 */
+.suit-wan  { color: #c92a2a; }
+.suit-tong { color: #1864ab; }
+.suit-tiao { color: #2f9e44; }
+.suit-feng { color: #5f3dc4; }
+.suit-jian { color: #e67700; }
+
+/* 麻将牌内容 */
+.tile-content {
+  width: 90%; height: 90%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: linear-gradient(180deg, #fefefe 0%, #f4f4f0 100%);
+  border-radius: 5px; border: 1px solid #e8e8e0; position: relative;
+}
+.tile-symbol { font-size: 22px; font-weight: 700; line-height: 1; }
+.tile-num { font-size: 11px; font-weight: 700; margin-top: 2px; letter-spacing: 1px; color: inherit; }
+.slot .tile-content { transform: scale(0.85); }
+.slot .tile-symbol { font-size: 20px; }
+.slot .tile-num { font-size: 10px; }
+
+@media (max-width: 380px) {
+  .tile { width: 46px; height: 60px; }
+  .slot { width: 40px; height: 52px; }
+  .tile-symbol { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<div class="game-wrap">
+  <header class="topbar">
+    <div class="logo">🀄 麻将消消乐</div>
+    <div class="timer-box"><span class="timer-label">⏱</span><span id="timer" class="timer">120</span></div>
+    <div class="counter-box"><span class="counter-label">剩余</span><span id="remain" class="counter">0</span></div>
+  </header>
+  <main id="board" class="board"></main>
+  <section class="slot-area">
+    <div class="slot-tip">暂存卡槽（凑齐 3 张相同自动消除）</div>
+    <div id="slots" class="slots">
+      <div class="slot" data-idx="0"></div><div class="slot" data-idx="1"></div>
+      <div class="slot" data-idx="2"></div><div class="slot" data-idx="3"></div>
+      <div class="slot" data-idx="4"></div><div class="slot" data-idx="5"></div>
+      <div class="slot" data-idx="6"></div>
+    </div>
+  </section>
+  <footer class="bottombar">
+    <button id="btn-restart" class="btn">🔄 重新开始</button>
+    <button id="btn-mute" class="btn">🔊 音效</button>
+  </footer>
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div id="modal-title" class="modal-title">🎉 胜利！</div>
+      <div id="modal-sub" class="modal-sub">恭喜你清空所有麻将牌</div>
+      <button id="modal-btn" class="btn primary">再来一局</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================== 音效系统 ================== */
+const Audio = (() => {
+  let ctx = null, muted = false, bgmGain = null, bgmTimer = null;
+  function ensureCtx() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function playClick() {
+    if (muted) return;
+    const c = ensureCtx(), t0 = c.currentTime;
+    const osc = c.createOscillator(), gain = c.createGain();
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(420, t0);
+    osc.frequency.exponentialRampToValueAtTime(180, t0 + 0.08);
+    gain.gain.setValueAtTime(0.35, t0); gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+    osc.connect(gain).connect(c.destination); osc.start(t0); osc.stop(t0 + 0.15);
+    const noise = c.createBufferSource();
+    const buf = c.createBuffer(1, c.sampleRate * 0.05, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
+    noise.buffer = buf;
+    const nGain = c.createGain(); nGain.gain.setValueAtTime(0.15, t0);
+    nGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.05);
+    const filter = c.createBiquadFilter(); filter.type = 'highpass'; filter.frequency.value = 1200;
+    noise.connect(filter).connect(nGain).connect(c.destination); noise.start(t0); noise.stop(t0 + 0.06);
+  }
+  function playLand() {
+    if (muted) return;
+    const c = ensureCtx(), t0 = c.currentTime;
+    const osc = c.createOscillator(), gain = c.createGain();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(880, t0);
+    osc.frequency.exponentialRampToValueAtTime(440, t0 + 0.15);
+    gain.gain.setValueAtTime(0.25, t0); gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.2);
+    osc.connect(gain).connect(c.destination); osc.start(t0); osc.stop(t0 + 0.22);
+  }
+  function playMatch() {
+    if (muted) return;
+    const c = ensureCtx();
+    [523.25, 659.25, 783.99].forEach((freq, i) => {
+      const t0 = c.currentTime + i * 0.08;
+      const osc = c.createOscillator(), gain = c.createGain();
+      osc.type = 'triangle'; osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0, t0); gain.gain.linearRampToValueAtTime(0.3, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
+      osc.connect(gain).connect(c.destination); osc.start(t0); osc.stop(t0 + 0.28);
+    });
+  }
+  function playFail() {
+    if (muted) return;
+    const c = ensureCtx(), t0 = c.currentTime;
+    const osc = c.createOscillator(), gain = c.createGain();
+    osc.type = 'sawtooth'; osc.frequency.setValueAtTime(330, t0);
+    osc.frequency.exponentialRampToValueAtTime(80, t0 + 0.6);
+    gain.gain.setValueAtTime(0.3, t0); gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.7);
+    osc.connect(gain).connect(c.destination); osc.start(t0); osc.stop(t0 + 0.75);
+  }
+  function playWin() {
+    if (muted) return;
+    const c = ensureCtx();
+    [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((freq, i) => {
+      const t0 = c.currentTime + i * 0.1;
+      const osc = c.createOscillator(), gain = c.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0, t0); gain.gain.linearRampToValueAtTime(0.3, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+      osc.connect(gain).connect(c.destination); osc.start(t0); osc.stop(t0 + 0.42);
+    });
+  }
+  function startBGM() {
+    if (muted) return; stopBGM();
+    const c = ensureCtx();
+    bgmGain = c.createGain(); bgmGain.gain.value = 0.07; bgmGain.connect(c.destination);
+    const scale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25];
+    let beat = 0;
+    function playNote() {
+      if (muted || !bgmGain) return;
+      const c = ensureCtx(), now = c.currentTime;
+      const freq = scale[Math.floor(Math.random() * scale.length)];
+      const osc = c.createOscillator(), g = c.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(freq, now);
+      g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(0.6, now + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      const lfo = c.createOscillator(), lfoGain = c.createGain();
+      lfo.frequency.value = 5; lfoGain.gain.value = 3;
+      lfo.connect(lfoGain).connect(osc.frequency); lfo.start(now); lfo.stop(now + 0.85);
+      osc.connect(g).connect(bgmGain); osc.start(now); osc.stop(now + 0.85);
+      if (beat % 4 === 0) {
+        const harm = c.createOscillator(), hg = c.createGain();
+        harm.type = 'sine'; harm.frequency.value = freq / 2;
+        hg.gain.setValueAtTime(0, now); hg.gain.linearRampToValueAtTime(0.3, now + 0.05);
+        hg.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+        harm.connect(hg).connect(bgmGain); harm.start(now); harm.stop(now + 1.25);
+      }
+      beat++;
+    }
+    bgmTimer = setInterval(playNote, 600);
+  }
+  function stopBGM() {
+    if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; }
+    if (bgmGain) { try { bgmGain.disconnect(); } catch(e){} bgmGain = null; }
+  }
+  function setMuted(m) { muted = m; if (m) stopBGM(); else startBGM(); }
+  return { playClick, playLand, playMatch, playFail, playWin, startBGM, stopBGM, setMuted, isMuted: () => muted, init: () => ensureCtx() };
+})();
+
+/* ================== 游戏主逻辑 ================== */
+const TILE_TYPES = [
+  { id:'w1', cls:'suit-wan', sym:'一', num:'万' },
+  { id:'w2', cls:'suit-wan', sym:'二', num:'万' },
+  { id:'w3', cls:'suit-wan', sym:'三', num:'万' },
+  { id:'w5', cls:'suit-wan', sym:'五', num:'万' },
+  { id:'w8', cls:'suit-wan', sym:'八', num:'万' },
+  { id:'t1', cls:'suit-tong', sym:'●', num:'一筒' },
+  { id:'t3', cls:'suit-tong', sym:'●●●', num:'三筒' },
+  { id:'t6', cls:'suit-tong', sym:'⬣', num:'六筒' },
+  { id:'t9', cls:'suit-tong', sym:'❀', num:'九筒' },
+  { id:'b2', cls:'suit-tiao', sym:'‖', num:'二条' },
+  { id:'b4', cls:'suit-tiao', sym:'╫', num:'四条' },
+  { id:'b7', cls:'suit-tiao', sym:'※', num:'七条' },
+  { id:'fE', cls:'suit-feng', sym:'東', num:'风' },
+  { id:'fS', cls:'suit-feng', sym:'南', num:'风' },
+  { id:'fW', cls:'suit-feng', sym:'西', num:'风' },
+  { id:'fN', cls:'suit-feng', sym:'北', num:'风' },
+  { id:'jZ', cls:'suit-jian', sym:'中', num:'' },
+  { id:'jF', cls:'suit-jian', sym:'發', num:'' },
+  { id:'jB', cls:'suit-jian', sym:'□', num:'白' }
+];
+
+const CONFIG = {
+  TIME_LIMIT: 120, SLOT_SIZE: 7, TILE_W: 52, TILE_H: 68,
+  LAYER_OFFSET_Y: -4,
+  LAYERS: [
+    { rows:6, cols:7 }, { rows:5, cols:6 }, { rows:4, cols:5 },
+    { rows:3, cols:4 }, { rows:2, cols:3 }
+  ]
+};
+
+const state = { tiles:[], slots:[], remaining:0, timeLeft:CONFIG.TIME_LIMIT, timerId:null, gameOver:false, busy:false };
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+function buildLevel() {
+  let totalSlots = 0;
+  CONFIG.LAYERS.forEach(L => totalSlots += L.rows * L.cols);
+  totalSlots -= totalSlots % 3;
+  const groups = totalSlots / 3;
+  const types = [];
+  for (let i = 0; i < groups; i++) types.push(TILE_TYPES[i % TILE_TYPES.length].id);
+  let pool = [];
+  types.forEach(t => { pool.push(t); pool.push(t); pool.push(t); });
+  pool = shuffle(pool);
+
+  const board = document.getElementById('board');
+  const boardW = board.clientWidth;
+  const tiles = [];
+  let idx = 0;
+
+  CONFIG.LAYERS.forEach((L, layerIdx) => {
+    const layerW = L.cols * (CONFIG.TILE_W + 4) - 4;
+    const layerStartX = (boardW - layerW) / 2;
+    const layerStartY = 30 + layerIdx * 8;
+    for (let r = 0; r < L.rows; r++) {
+      for (let c = 0; c < L.cols; c++) {
+        if (idx >= pool.length) break;
+        const x = layerStartX + c * (CONFIG.TILE_W + 4) + r * 2;
+        const y = layerStartY + r * (CONFIG.TILE_H * 0.55) - layerIdx * 10;
+        tiles.push({ id:'tile_'+idx, type:pool[idx], x, y, row:r, col:c, layer:layerIdx, el:null, inSlot:false, removed:false });
+        idx++;
+      }
+    }
+  });
+  return tiles;
+}
+
+function tileInnerHTML(typeId) {
+  const t = TILE_TYPES.find(x => x.id === typeId);
+  if (!t) return '';
+  return `<div class="tile-content"><div class="tile-symbol ${t.cls}">${t.sym}</div>${t.num ? `<div class="tile-num ${t.cls}">${t.num}</div>` : ''}</div>`;
+}
+
+function renderBoard() {
+  const board = document.getElementById('board'); board.innerHTML = '';
+  state.tiles.forEach(t => {
+    const el = document.createElement('div');
+    el.className = 'tile';
+    el.style.left = t.x + 'px'; el.style.top = t.y + 'px';
+    el.style.zIndex = 100 + t.layer * 10 + t.row;
+    el.innerHTML = tileInnerHTML(t.type); el.dataset.id = t.id;
+    el.addEventListener('click', () => onTileClick(t));
+    t.el = el; board.appendChild(el);
+  });
+  updateLockState();
+}
+
+function isCovered(tile) {
+  return state.tiles.some(other => {
+    if (other.removed || other.inSlot || other.layer <= tile.layer) return false;
+    return !(tile.x+CONFIG.TILE_W <= other.x || other.x+CONFIG.TILE_W <= tile.x ||
+             tile.y+CONFIG.TILE_H <= other.y || other.y+CONFIG.TILE_H <= tile.y);
+  });
+}
+
+function updateLockState() {
+  state.tiles.forEach(t => {
+    if (t.removed || t.inSlot || !t.el) return;
+    t.el.classList.toggle('locked', isCovered(t));
+  });
+}
+
+function onTileClick(tile) {
+  if (state.gameOver || state.busy || tile.removed || tile.inSlot || isCovered(tile)) return;
+  if (state.slots.length >= CONFIG.SLOT_SIZE) return;
+  Audio.playClick(); flyToSlot(tile);
+}
+
+function flyToSlot(tile) {
+  state.busy = true; tile.inSlot = true;
+  const slotIdx = computeInsertIndex(tile.type);
+  const slotEl = document.querySelectorAll('.slot')[slotIdx];
+  const slotRect = slotEl.getBoundingClientRect();
+  const board = document.getElementById('board');
+  const boardRect = board.getBoundingClientRect();
+  const targetX = slotRect.left - boardRect.left + (slotRect.width - CONFIG.TILE_W) / 2;
+  const targetY = slotRect.top - boardRect.top + (slotRect.height - CONFIG.TILE_H) / 2;
+  const dx = targetX - tile.x, dy = targetY - tile.y;
+  tile.el.classList.add('flying'); tile.el.style.transition = 'none';
+  const startX = tile.x, startY = tile.y, duration = 450, startTime = performance.now();
+  function animate(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const ease = 1 - Math.pow(1 - t, 2);
+    tile.el.style.left = (startX + dx * ease) + 'px';
+    tile.el.style.top = (startY + dy * ease - 60 * Math.sin(Math.PI * t)) + 'px';
+    if (t < 1) requestAnimationFrame(animate); else finishFly(tile, slotIdx);
+  }
+  requestAnimationFrame(animate);
+}
+
+function computeInsertIndex(typeId) {
+  let last = -1;
+  for (let i = 0; i < state.slots.length; i++) { if (state.slots[i].type === typeId) last = i; }
+  return last >= 0 ? last + 1 : state.slots.length;
+}
+
+function finishFly(tile, slotIdx) {
+  Audio.playLand();
+  state.slots.splice(slotIdx, 0, tile);
+  if (tile.el && tile.el.parentNode) tile.el.parentNode.removeChild(tile.el);
+  tile.el = null;
+  state.remaining--; updateRemainCounter(); renderSlots(); updateLockState();
+  setTimeout(checkMatch, 120);
+}
+
+function renderSlots() {
+  const slotEls = document.querySelectorAll('.slot');
+  slotEls.forEach(el => { el.innerHTML = ''; el.classList.remove('has-tile'); });
+  state.slots.forEach((tile, i) => {
+    const el = slotEls[i]; if (!el) return;
+    const tileEl = document.createElement('div'); tileEl.className = 'tile';
+    tileEl.innerHTML = tileInnerHTML(tile.type);
+    el.appendChild(tileEl); el.classList.add('has-tile');
+  });
+}
+
+function checkMatch() {
+  const groups = {};
+  state.slots.forEach((tile, i) => { if (!groups[tile.type]) groups[tile.type] = []; groups[tile.type].push(i); });
+  let matchedIdx = null;
+  for (const type in groups) { if (groups[type].length >= 3) { matchedIdx = groups[type].slice(0, 3); break; } }
+  if (matchedIdx) {
+    Audio.playMatch();
+    const slotEls = document.querySelectorAll('.slot');
+    matchedIdx.forEach(i => slotEls[i].classList.add('matching'));
+    setTimeout(() => {
+      const removeSet = new Set(matchedIdx);
+      state.slots = state.slots.filter((_, i) => !removeSet.has(i));
+      renderSlots(); state.busy = false;
+      if (state.remaining === 0 && state.slots.length === 0) win(); else checkMatchSilent();
+    }, 350);
+  } else {
+    state.busy = false;
+    if (state.slots.length >= CONFIG.SLOT_SIZE) lose('卡槽已满，无法消除');
+  }
+}
+
+function checkMatchSilent() {
+  const groups = {};
+  state.slots.forEach((tile, i) => { if (!groups[tile.type]) groups[tile.type] = []; groups[tile.type].push(i); });
+  for (const type in groups) { if (groups[type].length >= 3) { state.busy = true; checkMatch(); return; } }
+}
+
+function startTimer() {
+  state.timeLeft = CONFIG.TIME_LIMIT; updateTimer();
+  state.timerId = setInterval(() => {
+    state.timeLeft--; updateTimer();
+    if (state.timeLeft <= 0) { clearInterval(state.timerId); lose('时间到！'); }
+  }, 1000);
+}
+function updateTimer() {
+  const el = document.getElementById('timer'); el.textContent = state.timeLeft;
+  el.classList.toggle('warning', state.timeLeft <= 10);
+}
+function updateRemainCounter() { document.getElementById('remain').textContent = state.remaining; }
+
+function win() {
+  if (state.gameOver) return; state.gameOver = true; clearInterval(state.timerId);
+  Audio.playWin(); showModal('🎉 胜利！', `恭喜你在 ${CONFIG.TIME_LIMIT - state.timeLeft} 秒内清空所有麻将牌`);
+}
+function lose(reason) {
+  if (state.gameOver) return; state.gameOver = true; clearInterval(state.timerId);
+  Audio.playFail(); showModal('😵 游戏结束', reason || '挑战失败');
+}
+function showModal(title, sub) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-sub').textContent = sub;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function hideModal() { document.getElementById('modal').classList.add('hidden'); }
+
+function startGame() {
+  if (state.timerId) clearInterval(state.timerId);
+  state.tiles = []; state.slots = []; state.remaining = 0; state.gameOver = false; state.busy = false;
+  hideModal(); document.getElementById('timer').classList.remove('warning'); renderSlots();
+  state.tiles = buildLevel(); state.remaining = state.tiles.length;
+  updateRemainCounter(); renderBoard(); startTimer();
+  Audio.init(); if (!Audio.isMuted()) Audio.startBGM();
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btn-restart').addEventListener('click', () => { Audio.init(); startGame(); });
+  document.getElementById('modal-btn').addEventListener('click', () => { Audio.init(); startGame(); });
+  document.getElementById('btn-mute').addEventListener('click', e => {
+    const m = !Audio.isMuted(); Audio.setMuted(m);
+    e.currentTarget.textContent = m ? '🔇 静音' : '🔊 音效';
+  });
+  document.body.addEventListener('click', () => Audio.init(), { once: true });
+  startGame();
+});
+</script>
+</body>
+</html>
